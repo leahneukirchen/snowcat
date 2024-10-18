@@ -273,7 +273,7 @@ func (c *Conn) Write(b []byte) (n int, err error) {
 	} else {
 		defer unlocker()
 	}
-	for c.hs != nil && len(b) > 0 {
+	for c.hs != nil {
 		if !c.hsResponsibility {
 			err = c.hsRead()
 			if err != nil {

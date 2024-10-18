@@ -112,26 +112,11 @@ func makeNoiseServer(arg, clientarg string) {
 		}
 		log.Printf("%+v\n", nconn)
 		defer nconn.Close()
-
-		log.Printf("%v\n", nconn.(*noiseconn.Conn).HandshakeComplete())
-
-		for {
-			log.Println("READ")
-			b := make([]byte, 655360)
-			n, err := nconn.Read(b)
-			log.Println("READ DONE")
-			if err != nil {
-				log.Panic(err)
-			}
-			log.Printf("hsread=%v\n", n)
-			log.Println("WRITE")
-			nconn.Write([]byte("!"))
-			log.Println("WRITE DONE")
-			if nconn.(*noiseconn.Conn).HandshakeComplete() {
-				break
-			}
-		}
 		
+		for !nconn.(*noiseconn.Conn).HandshakeComplete() {
+			nconn.Write([]byte(""))
+		}
+
 		client := makeClient(clientarg)
 
 		go copy(nconn, client)
@@ -223,19 +208,7 @@ func makeNoiseClient(arg string) net.Conn {
 	log.Printf("%#+v\n", nconn.PeerStatic())
 	
 	for !nconn.HandshakeComplete() {
-		log.Println("WRITE")
-		nconn.Write([]byte("!"))
-		log.Println("WRITE DONE")
-		
-		b := make([]byte, 65536)
-		log.Println("READ")
-		n, err := nconn.Read(b)
-		log.Println("READ DONE")
-		if err != nil {
-			log.Panic(err)
-		}
-		log.Printf("hsread=%v\n", n)
-		log.Printf("%v\n", nconn.HandshakeComplete())
+		nconn.Write([]byte(""))
 	}
 
 	if verify != nil && !bytes.Equal(nconn.PeerStatic(), verify) {
