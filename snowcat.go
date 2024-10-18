@@ -3,7 +3,10 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"crypto/ecdh"
+	"crypto/ed25519"
 	"encoding/base64"
+	"encoding/binary"
 	"fmt"
 	"io"
 	"log"
@@ -15,10 +18,16 @@ import (
 
 	"github.com/flynn/noise"
 	"github.com/zeebo/errs"
-	"crypto/ecdh"
 )
 
 const prologue = "SNOWCAT-001"
+
+type HeaderField byte
+
+const (
+	HeaderEOH HeaderField = iota
+	HeaderCertificate
+)
 
 func proxyCopy(errc chan<- error, dst io.Writer, src io.Reader) {
 	var err error
@@ -131,6 +140,19 @@ func makeNoiseServer(arg, clientarg string) {
 		verifyPeer = loadKey(verify).Private // abuse, it's the public key
 	}
 
+	var verifyCA ed25519.PublicKey
+
+	if verify, ok := opts["verifyca"]; ok {
+		log.Println("will check certs")
+		verifyCA = loadCertificate(verify)
+	}
+
+	var cert []byte
+	if certificate, ok := opts["certificate"]; ok {
+		log.Println("loaded certificate")
+		cert = loadCertificate(certificate)
+	}
+
 	log.Printf("pubkey: %s\n", base64.StdEncoding.EncodeToString(keypair.Public))
 
 	cfg := noise.Config{
@@ -144,7 +166,6 @@ func makeNoiseServer(arg, clientarg string) {
 
 	nln := noiseconn.NewListener(ln, cfg)
 
-Accept:
 	for {
 		nconn, err := nln.Accept()
 		if err != nil {
@@ -152,22 +173,56 @@ Accept:
 		}
 		log.Printf("accepted %+v\n", nconn)
 
-		for !nconn.(*noiseconn.Conn).HandshakeComplete() {
-			_, err := nconn.Write([]byte(""))
-			if err != nil {
-				log.Println("error: ", err)
-				go nconn.Close()
-				continue Accept
-			}
-		}
-
-		if verifyPeer != nil && !bytes.Equal(nconn.(*noiseconn.Conn).PeerStatic(), verifyPeer) {
-			log.Println("error: key mismatch!")
-			go nconn.Close()
-			continue Accept
-		}
-
 		go func() {
+			for !nconn.(*noiseconn.Conn).HandshakeComplete() {
+				_, err := nconn.Write([]byte(""))
+				if err != nil {
+					log.Println("error: ", err)
+					nconn.Close()
+					return
+				}
+			}
+
+			if verifyPeer != nil && !bytes.Equal(nconn.(*noiseconn.Conn).PeerStatic(), verifyPeer) {
+				log.Println("error: key mismatch!")
+				nconn.Close()
+				return
+			}
+
+			if cert != nil {
+				log.Printf("sending cert\n")
+				writeFramed(nconn, HeaderCertificate, cert)
+			}
+			writeFramed(nconn, HeaderEOH, nil)
+
+			var certificatePeer []byte
+
+		Frame:
+			for {
+				typ, data := readFramed(nconn)
+				switch typ {
+				case HeaderEOH:
+					log.Printf("end of metadata\n")
+					break Frame
+				case HeaderCertificate:
+					certificatePeer = data
+				}
+			}
+
+			if verifyCA != nil {
+				if certificatePeer == nil {
+					go nconn.Close()
+					log.Println("no certificate sent!")
+					return
+				}
+
+				if !ed25519.Verify(verifyCA, nconn.(*noiseconn.Conn).PeerStatic(), certificatePeer) {
+					go nconn.Close()
+					log.Println("can't validate certificate!")
+					return
+				}
+			}
+
 			client, err := makeClient(clientarg)
 			if err != nil {
 				nconn.Close()
@@ -226,6 +281,29 @@ func loadKey(encoded string) noise.DHKey {
 	return noise.DHKey{Private: privkey, Public: key.PublicKey().Bytes()}
 }
 
+func loadCertificate(encoded string) []byte {
+	if strings.HasPrefix(encoded, "/") && !strings.HasSuffix(encoded, "=") {
+		file, err := os.Open(encoded)
+		if err != nil {
+			log.Fatal(err)
+		}
+		defer file.Close()
+
+		scanner := bufio.NewScanner(file)
+		if !scanner.Scan() {
+			log.Fatal("no private key found")
+		}
+		encoded = scanner.Text()
+	}
+
+	cert, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	return cert
+}
+
 func parseConn(arg string) (dial string, options map[string]string) {
 	args := strings.Split(arg, ",")
 	dial = args[0]
@@ -244,6 +322,33 @@ func parseConn(arg string) (dial string, options map[string]string) {
 	return
 }
 
+func writeFramed(wr io.Writer, typ HeaderField, data []byte) {
+	if typ == 0 {
+		wr.Write([]byte{0, 0})
+		return
+	}
+	buf := append(make([]byte, 3), data...)
+	buf[2] = byte(typ)
+	binary.BigEndian.PutUint16(buf[:2], uint16(len(data)))
+	wr.Write(buf)
+}
+
+func readFramed(rd io.Reader) (typ HeaderField, data []byte) {
+	buf := make([]byte, 2)
+	if n, err := rd.Read(buf); err != nil || n != 2 {
+		log.Fatal("??? ", err)
+	}
+	msgSize := int(binary.BigEndian.Uint16(buf[:]))
+	if msgSize == 0 {
+		return 0, nil
+	}
+	buf = make([]byte, 1+msgSize)
+	if n, err := rd.Read(buf); err != nil || n != 1+msgSize {
+		log.Fatalf("??! n=%d %v\n", n, err)
+	}
+	return HeaderField(buf[0]), buf[1:]
+}
+
 func makeNoiseClient(arg string) (net.Conn, error) {
 	arg, opts := parseConn(arg)
 
@@ -251,6 +356,13 @@ func makeNoiseClient(arg string) (net.Conn, error) {
 
 	if verify, ok := opts["verify"]; ok {
 		verifyPeer = loadKey(verify).Private // abuse, it's the public key
+	}
+
+	var verifyCA ed25519.PublicKey
+
+	if verify, ok := opts["verifyca"]; ok {
+		log.Println("will check certs")
+		verifyCA = loadCertificate(verify)
 	}
 
 	var keypair noise.DHKey
@@ -298,6 +410,38 @@ func makeNoiseClient(arg string) (net.Conn, error) {
 		return nil, errs.New("key mismatch!")
 	}
 
+	if certificate, ok := opts["certificate"]; ok {
+		writeFramed(nconn, HeaderCertificate, loadCertificate(certificate))
+	}
+	writeFramed(nconn, HeaderEOH, nil)
+
+	var certificatePeer []byte
+
+Frame:
+	for {
+		typ, data := readFramed(nconn)
+		switch typ {
+		case HeaderEOH:
+			log.Printf("end of metadata\n")
+			break Frame
+		case HeaderCertificate:
+			log.Printf("got cert\n")
+			certificatePeer = data
+		}
+	}
+
+	if verifyCA != nil {
+		if certificatePeer == nil {
+			go nconn.Close()
+			return nil, errs.New("no certificate sent!")
+		}
+
+		if !ed25519.Verify(verifyCA, nconn.PeerStatic(), certificatePeer) {
+			go nconn.Close()
+			return nil, errs.New("can't validate certificate!")
+		}
+	}
+
 	return nconn, nil
 }
 
@@ -321,6 +465,99 @@ func main() {
 		}
 		keypair := loadKey(scanner.Text())
 		fmt.Println(base64.StdEncoding.EncodeToString(keypair.Public))
+		return
+	}
+
+	if os.Args[1] == "genca" {
+		_, priv, err := ed25519.GenerateKey(nil)
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		fmt.Println(base64.StdEncoding.EncodeToString(priv))
+		return
+	}
+
+	if os.Args[1] == "capubkey" {
+		scanner := bufio.NewScanner(os.Stdin)
+		if !scanner.Scan() {
+			log.Fatal("no private CA key given on standard input")
+		}
+		var privkey ed25519.PrivateKey
+		privkey, err := base64.StdEncoding.DecodeString(scanner.Text())
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		fmt.Println(base64.StdEncoding.EncodeToString(privkey.Public().(ed25519.PublicKey)))
+		return
+	}
+
+	if os.Args[1] == "casignkey" {
+		scanner := bufio.NewScanner(os.Stdin)
+		if !scanner.Scan() {
+			log.Fatal("no private CA key given on standard input")
+		}
+
+		var privkey ed25519.PrivateKey
+		privkey, err := base64.StdEncoding.DecodeString(scanner.Text())
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		if !scanner.Scan() {
+			log.Fatal("no public key given on standard input")
+		}
+
+		pubkey := loadKey(scanner.Text()).Private // abuse
+
+		log.Printf("%+v\n", privkey[:32])
+		log.Printf("%+v\n", privkey.Public().(ed25519.PublicKey))
+		log.Printf("%+v\n", pubkey)
+
+		signature := ed25519.Sign(privkey, pubkey)
+
+		log.Printf("%+v\n", signature)
+
+		fmt.Println(base64.StdEncoding.EncodeToString(signature))
+
+		log.Println(ed25519.Verify(privkey.Public().(ed25519.PublicKey), pubkey, signature))
+		return
+	}
+
+	if os.Args[1] == "cacheckkey" {
+		scanner := bufio.NewScanner(os.Stdin)
+		if !scanner.Scan() {
+			log.Fatal("no private CA key given on standard input")
+		}
+
+		var capubkey ed25519.PublicKey
+		capubkey, err := base64.StdEncoding.DecodeString(scanner.Text())
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		if !scanner.Scan() {
+			log.Fatal("no public key given on standard input")
+		}
+
+		pubkey := loadKey(scanner.Text()).Private // abuse
+
+		if !scanner.Scan() {
+			log.Fatal("no public key given on standard input")
+		}
+
+		signature, err := base64.StdEncoding.DecodeString(scanner.Text())
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		if ed25519.Verify(capubkey, pubkey, signature) {
+			log.Println("OK!")
+		} else {
+			log.Fatal("fail")
+		}
+
 		return
 	}
 

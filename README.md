@@ -43,7 +43,6 @@ No promises, but features added likely in the future:
 - Pre-shared keys
 - inetd mode
 - Dispatching to different services based on key
-- Certificate support (Ed25519)
 
 ## License
 
