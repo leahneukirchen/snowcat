@@ -185,6 +185,20 @@ func makeTcpClient(arg string) (net.Conn, error) {
 }
 
 func loadKey(encoded string) noise.DHKey {
+	if strings.HasPrefix(encoded, "/") && !strings.HasSuffix(encoded, "=") {
+		file, err := os.Open(encoded)
+		if err != nil {
+			log.Fatal(err)
+		}
+		defer file.Close()
+
+		scanner := bufio.NewScanner(file)
+		if !scanner.Scan() {
+			log.Fatal("no private key found")
+		}
+		encoded = scanner.Text()
+	}
+
 	privkey, err := base64.StdEncoding.DecodeString(encoded)
 	if err != nil {
 		log.Fatal(err)
@@ -229,7 +243,7 @@ func makeNoiseClient(arg string) (net.Conn, error) {
 	}
 
 	if verify, ok := opts["verify"]; ok {
-		data, err := base64.StdEncoding.DecodeString(verify)
+		data := loadKey(verify).Private // abuse, it's the public key
 		if err != nil {
 			log.Fatal(err)
 		}
