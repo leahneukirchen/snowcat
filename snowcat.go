@@ -14,6 +14,7 @@ import (
 
 	"golang.org/x/crypto/curve25519"
 	"github.com/flynn/noise"
+	"github.com/zeebo/errs"
 )
 
 const prologue = "SNOWCAT-001"
@@ -46,7 +47,10 @@ func copy(dst, src net.Conn) {
 
 func makeServer(arg, clientarg string) {
 	if arg == "-" {
-		client := makeClient(clientarg)
+		client, err := makeClient(clientarg)
+		if err != nil {
+			log.Fatal(err)
+		}
 		
 		copy(nil, client)
 		return
@@ -73,11 +77,17 @@ func makeTcpServer(arg, clientarg string) {
 		if err != nil {
 			log.Panic(err)
 		}
-//		defer conn.Close()
 
-		client := makeClient(clientarg)
-
-		go copy(conn, client)
+		go func() {
+			client, err := makeClient(clientarg)
+			if err != nil {
+				conn.(*net.TCPConn).SetLinger(0)
+				conn.Close()
+				log.Printf("error: %v", err)
+				return
+			}
+			copy(conn, client)
+		}()
 	}
 }
 
@@ -124,16 +134,21 @@ Accept:
 		}
 
 		go func() {
-			client := makeClient(clientarg)
+			client, err := makeClient(clientarg)
+			if err != nil {
+				nconn.Close()
+				log.Print("error: %v", err)
+				return
+			}
 			copy(nconn, client)
 			log.Printf("done")
 		}()
 	}
 }
 
-func makeClient(arg string) net.Conn {
+func makeClient(arg string) (net.Conn, error) {
 	if arg == "-" {
-		return nil
+		return nil, nil
 	}
 
 	if strings.HasPrefix(arg, "snow:") {
@@ -143,13 +158,8 @@ func makeClient(arg string) net.Conn {
 	return makeTcpClient(arg)
 }
 
-func makeTcpClient(arg string) net.Conn {
-	conn, err := net.Dial("tcp", arg)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	return conn
+func makeTcpClient(arg string) (net.Conn, error) {
+	return net.Dial("tcp", arg)
 }
 
 func loadKey(encoded string) noise.DHKey {
@@ -186,7 +196,7 @@ func parseConn(arg string) (dial string, options map[string]string) {
 	return
 }
 
-func makeNoiseClient(arg string) net.Conn {
+func makeNoiseClient(arg string) (net.Conn, error) {
 	arg, opts := parseConn(arg)
 
 	var verifyPeer []byte
@@ -239,14 +249,14 @@ func makeNoiseClient(arg string) net.Conn {
 
 	if verifyPeer != nil && !bytes.Equal(nconn.PeerStatic(), verifyPeer) {
 		go nconn.Close()
-		log.Fatal("key mismatch!")
+		return nil, errs.New("key mismatch!")
 	}
 
 //	log.Printf("connected to: %s %s\n", base64.StdEncoding.EncodeToString(nconn.PeerStatic()),
 //		base64.StdEncoding.EncodeToString(verify))
 //	log.Printf("%+v\n", nconn.PeerStatic())
 
-	return nconn
+	return nconn, nil
 }
 
 func main() {
