@@ -11,7 +11,6 @@ import (
 	"github.com/zeebo/errs"
 )
 
-const HeaderByte = 0x80
 const flushLimit = 640 * 1024
 
 // MessageInspector is a callback that gets informed about unparsed
@@ -207,17 +206,12 @@ func (c *Conn) Read(b []byte) (n int, err error) {
 func (c *Conn) readMsg(b []byte) ([]byte, error) {
 	// TODO(jt): make sure these reads are through bufio somewhere in the stack
 	// appropriate.
-	var msgHeader [4]byte
+	var msgHeader [2]byte
 	_, err := io.ReadFull(c.Conn, msgHeader[:])
 	if err != nil {
 		return nil, errs.Wrap(err)
 	}
-	if msgHeader[0] != HeaderByte {
-		// TODO(jt): close conn?
-		return nil, errs.New("unknown message header")
-	}
-	msgHeader[0] = 0
-	msgSize := int(binary.BigEndian.Uint32(msgHeader[:]))
+	msgSize := int(binary.BigEndian.Uint16(msgHeader[:]))
 	b = append(b[len(b):], make([]byte, msgSize)...)
 	_, err = io.ReadFull(c.Conn, b)
 	if err != nil {
@@ -230,18 +224,17 @@ func (c *Conn) readMsg(b []byte) ([]byte, error) {
 }
 
 func (c *Conn) frame(header, b []byte) error {
-	if len(b) >= 1<<(8*3) {
+	if len(b) >= 1<<(8*2) {
 		return errs.New("message too large: %d", len(b))
 	}
-	binary.BigEndian.PutUint32(header[:4], uint32(len(b)))
-	header[0] = HeaderByte
+	binary.BigEndian.PutUint16(header[:2], uint16(len(b)))
 	return nil
 }
 
 func (c *Conn) hsCreate(out, payload []byte) (_ []byte, err error) {
 	var cs1, cs2 *noise.CipherState
 	outlen := len(out)
-	out, cs1, cs2, err = c.hs.WriteMessage(append(out, make([]byte, 4)...), payload)
+	out, cs1, cs2, err = c.hs.WriteMessage(append(out, make([]byte, 2)...), payload)
 	if err != nil {
 		return nil, errs.Wrap(err)
 	}
@@ -252,7 +245,7 @@ func (c *Conn) hsCreate(out, payload []byte) (_ []byte, err error) {
 	c.setCipherStates(cs1, cs2)
 	c.hsResponsibility = false
 	c.readBarrier.Release()
-	return out, c.frame(out[outlen:], out[outlen+4:])
+	return out, c.frame(out[outlen:], out[outlen+2:])
 }
 
 // If a Noise handshake is still occurring (or has yet to occur), the
@@ -300,11 +293,11 @@ func (c *Conn) Write(b []byte) (n int, err error) {
 	for len(b) > 0 {
 		outlen := len(c.writeMsgBuf)
 		l := min(noise.MaxMsgLen, len(b))
-		c.writeMsgBuf, err = c.send.Encrypt(append(c.writeMsgBuf, make([]byte, 4)...), nil, b[:l])
+		c.writeMsgBuf, err = c.send.Encrypt(append(c.writeMsgBuf, make([]byte, 2)...), nil, b[:l])
 		if err != nil {
 			return n, errs.Wrap(err)
 		}
-		err = c.frame(c.writeMsgBuf[outlen:], c.writeMsgBuf[outlen+4:])
+		err = c.frame(c.writeMsgBuf[outlen:], c.writeMsgBuf[outlen+2:])
 		if err != nil {
 			return n, err
 		}
