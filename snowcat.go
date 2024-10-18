@@ -125,6 +125,12 @@ func makeNoiseServer(arg, clientarg string) {
 		}
 	}
 
+	var verifyPeer []byte
+
+	if verify, ok := opts["verify"]; ok {
+		verifyPeer = loadKey(verify).Private // abuse, it's the public key
+	}
+
 	log.Printf("pubkey: %s\n", base64.StdEncoding.EncodeToString(keypair.Public))
 
 	cfg := noise.Config{
@@ -150,9 +156,15 @@ Accept:
 			_, err := nconn.Write([]byte(""))
 			if err != nil {
 				log.Println("error: ", err)
-				nconn.Close()
+				go nconn.Close()
 				continue Accept
 			}
+		}
+
+		if verifyPeer != nil && !bytes.Equal(nconn.(*noiseconn.Conn).PeerStatic(), verifyPeer) {
+			log.Println("error: key mismatch!")
+			go nconn.Close()
+			continue Accept
 		}
 
 		go func() {
@@ -237,21 +249,19 @@ func makeNoiseClient(arg string) (net.Conn, error) {
 
 	var verifyPeer []byte
 
-	keypair, err := noise.DH25519.GenerateKeypair(nil)
-	if err != nil {
-		log.Panic(err)
-	}
-
 	if verify, ok := opts["verify"]; ok {
-		data := loadKey(verify).Private // abuse, it's the public key
-		if err != nil {
-			log.Fatal(err)
-		}
-		verifyPeer = data
+		verifyPeer = loadKey(verify).Private // abuse, it's the public key
 	}
 
+	var keypair noise.DHKey
 	if privkey, ok := opts["privkey"]; ok {
 		keypair = loadKey(privkey)
+	} else {
+		var err error
+		keypair, err = noise.DH25519.GenerateKeypair(nil)
+		if err != nil {
+			log.Panic(err)
+		}
 	}
 
 	log.Printf("%v\n", keypair)
