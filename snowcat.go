@@ -67,7 +67,16 @@ func makeServer(arg, clientarg string) {
 }
 
 func makeTcpServer(arg, clientarg string) {
-	ln, err := net.Listen("tcp", arg)
+	arg, opts := parseConn(arg)
+
+	protocol := "tcp"
+	if _, ok := opts["tcp6"]; ok {
+		protocol = "tcp6"
+	} else if _, ok := opts["tcp4"]; ok {
+		protocol = "tcp4"
+	}
+
+	ln, err := net.Listen(protocol, arg)
 	if err != nil {
 		log.Panic(err)
 	}
