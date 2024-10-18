@@ -16,7 +16,7 @@ import (
 	"github.com/flynn/noise"
 )
 
-const prologue = "SNOWCAT-000"
+const prologue = "SNOWCAT-001"
 
 func proxyCopy(errc chan<- error, dst io.Writer, src io.Reader) {
 	if dst == nil {
@@ -105,21 +105,27 @@ func makeNoiseServer(arg, clientarg string) {
 
 	nln := noiseconn.NewListener(ln, cfg)
 
+Accept:
 	for {
 		nconn, err := nln.Accept()
 		if err != nil {
 			log.Panic(err)
 		}
-		log.Printf("%+v\n", nconn)
-		defer nconn.Close()
+		log.Printf("accepted %+v\n", nconn)
 		
 		for !nconn.(*noiseconn.Conn).HandshakeComplete() {
-			nconn.Write([]byte(""))
+			_, err := nconn.Write([]byte(""))
+			if err != nil {
+				log.Println("error: ", err)
+				nconn.Close()
+				continue Accept
+			}
 		}
 
-		client := makeClient(clientarg)
-
-		go copy(nconn, client)
+		go func() {
+			client := makeClient(clientarg)
+			copy(nconn, client)
+		}()
 	}
 }
 
@@ -208,7 +214,11 @@ func makeNoiseClient(arg string) net.Conn {
 	log.Printf("%#+v\n", nconn.PeerStatic())
 	
 	for !nconn.HandshakeComplete() {
-		nconn.Write([]byte(""))
+		_, err := nconn.Write([]byte(""))
+		if err != nil {
+			go nconn.Close()
+			log.Fatal(err)
+		}
 	}
 
 	if verify != nil && !bytes.Equal(nconn.PeerStatic(), verify) {
