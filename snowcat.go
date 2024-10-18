@@ -168,30 +168,44 @@ func loadKey(encoded string) noise.DHKey {
 	return noise.DHKey{Private: privkey, Public: pubkey}
 }
 
-func makeNoiseClient(arg string) net.Conn {
+func parseConn(arg string) (dial string, options map[string]string) {
 	args := strings.Split(arg, ",")
-	arg = args[0]
+	dial = args[0]
 
-	var verify []byte
+	options = make(map[string]string)
+
+	for _, flag := range(args[1:]) {
+		kv := strings.SplitN(flag, "=", 2)
+		if len(kv) == 2 {
+			options[kv[0]] = kv[1]
+		} else {
+			options[kv[0]] = ""
+		}
+	}
+
+	return
+}
+
+func makeNoiseClient(arg string) net.Conn {
+	arg, opts := parseConn(arg)
+
+	var verifyPeer []byte
 
 	keypair, err := noise.DH25519.GenerateKeypair(nil)
 	if err != nil {
 		log.Panic(err)
 	}
 
-	for _, flag := range(args[1:]) {
-		switch {
-		case strings.HasPrefix(flag, "verify="):
-			data, err := base64.StdEncoding.DecodeString(flag[7:])
-			if err != nil {
-				log.Fatal(err)
-			}
-			verify = data
-		case strings.HasPrefix(flag, "privkey="):
-			keypair = loadKey(flag[8:])
-		default:
-			log.Printf("ignoring unknown flag %s\n", flag)
+	if verify, ok := opts["verify"]; ok {
+		data, err := base64.StdEncoding.DecodeString(verify)
+		if err != nil {
+			log.Fatal(err)
 		}
+		verifyPeer = data
+	}
+
+	if privkey, ok := opts["privkey"]; ok {
+		keypair = loadKey(privkey)
 	}
 
 	log.Printf("%v\n", keypair)
@@ -223,7 +237,7 @@ func makeNoiseClient(arg string) net.Conn {
 		}
 	}
 
-	if verify != nil && !bytes.Equal(nconn.PeerStatic(), verify) {
+	if verifyPeer != nil && !bytes.Equal(nconn.PeerStatic(), verifyPeer) {
 		go nconn.Close()
 		log.Fatal("key mismatch!")
 	}
