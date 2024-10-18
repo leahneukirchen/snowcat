@@ -47,7 +47,8 @@ type Conn struct {
 	writeMsgBuf      []byte
 	readBuf          []byte
 	send, recv       *noise.CipherState
-	rfmValidate       MessageInspector
+	rfmValidate      MessageInspector
+	peerStatic       []byte
 }
 
 var _ net.Conn = (*Conn)(nil)
@@ -70,7 +71,7 @@ func NewConnWithOptions(conn net.Conn, config noise.Config, opts Options) (*Conn
 		hs:               hs,
 		initiator:        config.Initiator,
 		hsResponsibility: config.Initiator,
-		rfmValidate:       opts.ResponderFirstMessageValidator,
+		rfmValidate:      opts.ResponderFirstMessageValidator,
 	}, nil
 }
 
@@ -88,6 +89,7 @@ func (c *Conn) setCipherStates(cs1, cs2 *noise.CipherState) {
 	if c.send != nil {
 		c.readBarrier.Release()
 		c.hh = c.hs.ChannelBinding()
+		c.peerStatic = c.hs.PeerStatic()
 		c.hs = nil
 	}
 }
@@ -341,6 +343,13 @@ func (c *Conn) HandshakeHash() []byte {
 	c.hsMu.Lock()
 	defer c.hsMu.Unlock()
 	return c.hh
+}
+
+// PeerStatic returns the static key of the peer, as soon as it is known.
+func (c *Conn) PeerStatic() []byte {
+	c.hsMu.Lock()
+	defer c.hsMu.Unlock()
+	return c.peerStatic
 }
 
 func min(a, b int) int {

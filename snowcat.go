@@ -10,9 +10,6 @@ import (
 	"encoding/base64"
 	"bytes"
 
-	"reflect"
-	"unsafe"
-
 	"github.com/leahneukirchen/snowcat/noiseconn"
 
 	"golang.org/x/crypto/curve25519"
@@ -20,14 +17,6 @@ import (
 )
 
 const prologue = "SNOWCAT-000"
-
-func GetHandshakeState(conn *noiseconn.Conn) (*noise.HandshakeState) {
-	rs := reflect.ValueOf(conn).Elem()
-	rf := rs.FieldByName("hs")
-	// rf can't be read or set.
-	rf = reflect.NewAt(rf.Type(), unsafe.Pointer(rf.UnsafeAddr())).Elem()
-	return rf.Interface().(*noise.HandshakeState)
-}
 
 func proxyCopy(errc chan<- error, dst io.Writer, src io.Reader) {
 	if dst == nil {
@@ -230,10 +219,8 @@ func makeNoiseClient(arg string) net.Conn {
 
 	nconn, err := noiseconn.NewConn(conn, cfg)
 
-	hs := GetHandshakeState(nconn)
-		
 	log.Printf("%v\n", nconn.HandshakeComplete())
-	log.Printf("%#+v\n", hs.PeerStatic())
+	log.Printf("%#+v\n", nconn.PeerStatic())
 	
 	for !nconn.HandshakeComplete() {
 		log.Println("WRITE")
@@ -251,14 +238,14 @@ func makeNoiseClient(arg string) net.Conn {
 		log.Printf("%v\n", nconn.HandshakeComplete())
 	}
 
-	if verify != nil && !bytes.Equal(hs.PeerStatic(), verify) {
+	if verify != nil && !bytes.Equal(nconn.PeerStatic(), verify) {
 		go nconn.Close()
 		log.Fatal("key mismatch!")
 	}
 
-//	log.Printf("connected to: %s %s\n", base64.StdEncoding.EncodeToString(hs.PeerStatic()),
+//	log.Printf("connected to: %s %s\n", base64.StdEncoding.EncodeToString(nconn.PeerStatic()),
 //		base64.StdEncoding.EncodeToString(verify))
-//	log.Printf("%+v\n", hs.PeerStatic())
+//	log.Printf("%+v\n", nconn.PeerStatic())
 
 	return nconn
 }
