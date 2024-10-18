@@ -2,20 +2,20 @@ package main
 
 import (
 	"bufio"
+	"bytes"
+	"encoding/base64"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"os"
-	"io"
 	"strings"
-	"encoding/base64"
-	"bytes"
 
 	"github.com/leahneukirchen/snowcat/noiseconn"
 
-	"golang.org/x/crypto/curve25519"
 	"github.com/flynn/noise"
 	"github.com/zeebo/errs"
+	"golang.org/x/crypto/curve25519"
 )
 
 const prologue = "SNOWCAT-001"
@@ -40,7 +40,7 @@ func copy(dst, src net.Conn) {
 		return
 	}
 
-	errc := make(chan error, 1)	
+	errc := make(chan error, 1)
 	go proxyCopy(errc, src, dst)
 	go proxyCopy(errc, dst, src)
 	<-errc
@@ -52,7 +52,7 @@ func makeServer(arg, clientarg string) {
 		if err != nil {
 			log.Fatal(err)
 		}
-		
+
 		copy(nil, client)
 		return
 	}
@@ -65,7 +65,6 @@ func makeServer(arg, clientarg string) {
 	makeTcpServer(arg, clientarg)
 	return
 }
-
 
 func makeTcpServer(arg, clientarg string) {
 	ln, err := net.Listen("tcp", arg)
@@ -95,8 +94,6 @@ func makeTcpServer(arg, clientarg string) {
 func makeNoiseServer(arg, clientarg string) {
 	arg, opts := parseConn(arg)
 
-log.Printf("LISTEN %s\n", arg)
-
 	protocol := "tcp"
 	if _, ok := opts["tcp6"]; ok {
 		protocol = "tcp6"
@@ -121,7 +118,6 @@ log.Printf("LISTEN %s\n", arg)
 
 	log.Printf("pubkey: %s\n", base64.StdEncoding.EncodeToString(keypair.Public))
 
-
 	cfg := noise.Config{
 		CipherSuite: noise.NewCipherSuite(noise.DH25519,
 			noise.CipherChaChaPoly, noise.HashBLAKE2b),
@@ -140,7 +136,7 @@ Accept:
 			log.Panic(err)
 		}
 		log.Printf("accepted %+v\n", nconn)
-		
+
 		for !nconn.(*noiseconn.Conn).HandshakeComplete() {
 			_, err := nconn.Write([]byte(""))
 			if err != nil {
@@ -201,7 +197,7 @@ func parseConn(arg string) (dial string, options map[string]string) {
 
 	options = make(map[string]string)
 
-	for _, flag := range(args[1:]) {
+	for _, flag := range args[1:] {
 		kv := strings.SplitN(flag, "=", 2)
 		if len(kv) == 2 {
 			options[kv[0]] = kv[1]
@@ -255,7 +251,7 @@ func makeNoiseClient(arg string) (net.Conn, error) {
 
 	log.Printf("%v\n", nconn.HandshakeComplete())
 	log.Printf("%#+v\n", nconn.PeerStatic())
-	
+
 	for !nconn.HandshakeComplete() {
 		_, err := nconn.Write([]byte(""))
 		if err != nil {
@@ -269,10 +265,6 @@ func makeNoiseClient(arg string) (net.Conn, error) {
 		return nil, errs.New("key mismatch!")
 	}
 
-//	log.Printf("connected to: %s %s\n", base64.StdEncoding.EncodeToString(nconn.PeerStatic()),
-//		base64.StdEncoding.EncodeToString(verify))
-//	log.Printf("%+v\n", nconn.PeerStatic())
-
 	return nconn, nil
 }
 
@@ -280,7 +272,7 @@ func main() {
 	log.SetPrefix("snowcat: ")
 	log.SetFlags(log.Flags() &^ (log.Ldate | log.Ltime))
 
-	if (os.Args[1] == "genkey") {
+	if os.Args[1] == "genkey" {
 		keypair, err := noise.DH25519.GenerateKeypair(nil)
 		if err != nil {
 			log.Fatal(err)
@@ -289,7 +281,7 @@ func main() {
 		return
 	}
 
-	if (os.Args[1] == "pubkey") {
+	if os.Args[1] == "pubkey" {
 		scanner := bufio.NewScanner(os.Stdin)
 		if !scanner.Scan() {
 			log.Fatal("no private key given on standard input")
