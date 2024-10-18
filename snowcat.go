@@ -92,14 +92,30 @@ func makeTcpServer(arg, clientarg string) {
 }
 
 func makeNoiseServer(arg, clientarg string) {
-	ln, err := net.Listen("tcp", arg)
+	arg, opts := parseConn(arg)
+
+log.Printf("LISTEN %s\n", arg)
+
+	protocol := "tcp"
+	if _, ok := opts["tcp6"]; ok {
+		protocol = "tcp6"
+	} else if _, ok := opts["tcp4"]; ok {
+		protocol = "tcp4"
+	}
+
+	ln, err := net.Listen(protocol, arg)
 	if err != nil {
 		log.Panic(err)
 	}
 
-	keypair, err := noise.DH25519.GenerateKeypair(nil)
-	if err != nil {
-		log.Panic(err)
+	var keypair noise.DHKey
+	if privkey, ok := opts["privkey"]; ok {
+		keypair = loadKey(privkey)
+	} else {
+		keypair, err = noise.DH25519.GenerateKeypair(nil)
+		if err != nil {
+			log.Panic(err)
+		}
 	}
 
 	log.Printf("pubkey: %s\n", base64.StdEncoding.EncodeToString(keypair.Public))
