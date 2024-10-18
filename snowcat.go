@@ -15,7 +15,7 @@ import (
 
 	"github.com/flynn/noise"
 	"github.com/zeebo/errs"
-	"golang.org/x/crypto/curve25519"
+	"crypto/ecdh"
 )
 
 const prologue = "SNOWCAT-001"
@@ -218,12 +218,12 @@ func loadKey(encoded string) noise.DHKey {
 	if len(privkey) != 32 {
 		log.Fatalf("privkey is not 32 bytes: %#v", privkey)
 	}
-	pubkey, err := curve25519.X25519(privkey, curve25519.Basepoint)
+
+	key, err := ecdh.X25519().NewPrivateKey(privkey)
 	if err != nil {
 		log.Fatal(err)
 	}
-
-	return noise.DHKey{Private: privkey, Public: pubkey}
+	return noise.DHKey{Private: privkey, Public: key.PublicKey().Bytes()}
 }
 
 func parseConn(arg string) (dial string, options map[string]string) {
