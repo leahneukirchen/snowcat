@@ -174,7 +174,9 @@ func makeNoiseServer(arg, clientarg string) {
 		log.Printf("accepted %+v\n", nconn)
 
 		go func() {
-			for !nconn.(*noiseconn.Conn).HandshakeComplete() {
+			nconn := nconn.(*noiseconn.Conn)
+
+			for !nconn.HandshakeComplete() {
 				_, err := nconn.Write([]byte(""))
 				if err != nil {
 					log.Println("error: ", err)
@@ -183,7 +185,7 @@ func makeNoiseServer(arg, clientarg string) {
 				}
 			}
 
-			if verifyPeer != nil && !bytes.Equal(nconn.(*noiseconn.Conn).PeerStatic(), verifyPeer) {
+			if verifyPeer != nil && !bytes.Equal(nconn.PeerStatic(), verifyPeer) {
 				log.Println("error: key mismatch!")
 				nconn.Close()
 				return
@@ -216,7 +218,7 @@ func makeNoiseServer(arg, clientarg string) {
 					return
 				}
 
-				if !ed25519.Verify(verifyCA, nconn.(*noiseconn.Conn).PeerStatic(), certificatePeer) {
+				if !ed25519.Verify(verifyCA, nconn.PeerStatic(), certificatePeer) {
 					go nconn.Close()
 					log.Println("can't validate certificate!")
 					return
