@@ -19,15 +19,16 @@ import (
 const prologue = "SNOWCAT-001"
 
 func proxyCopy(errc chan<- error, dst io.Writer, src io.Reader) {
+	var err error
 	if dst == nil {
-		dst = os.Stdout
+		dst, err = os.OpenFile("/dev/stdout", os.O_WRONLY, 0)
 	}
 	if src == nil {
-		src = os.Stdin
+		src, err = os.OpenFile("/dev/stdin", os.O_RDONLY, 0)
 	}
 	defer src.(io.Closer).Close()
 	defer dst.(io.Closer).Close()
-	_, err := io.Copy(dst, src)
+	_, err = io.Copy(dst, src)
 	errc <- err
 }
 
@@ -125,6 +126,7 @@ Accept:
 		go func() {
 			client := makeClient(clientarg)
 			copy(nconn, client)
+			log.Printf("done")
 		}()
 	}
 }
