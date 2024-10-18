@@ -13,9 +13,10 @@ import (
 	"reflect"
 	"unsafe"
 
+	"github.com/leahneukirchen/snowcat/noiseconn"
+
 	"golang.org/x/crypto/curve25519"
 	"github.com/flynn/noise"
-	"github.com/jtolio/noiseconn"
 )
 
 const prologue = "SNOWCAT-000"
