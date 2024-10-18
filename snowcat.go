@@ -1,7 +1,8 @@
 package main
 
 import (
-//	"fmt"
+	"bufio"
+	"fmt"
 	"log"
 	"net"
 	"os"
@@ -278,6 +279,25 @@ func makeNoiseClient(arg string) (net.Conn, error) {
 func main() {
 	log.SetPrefix("snowcat: ")
 	log.SetFlags(log.Flags() &^ (log.Ldate | log.Ltime))
+
+	if (os.Args[1] == "genkey") {
+		keypair, err := noise.DH25519.GenerateKeypair(nil)
+		if err != nil {
+			log.Fatal(err)
+		}
+		fmt.Println(base64.StdEncoding.EncodeToString(keypair.Private))
+		return
+	}
+
+	if (os.Args[1] == "pubkey") {
+		scanner := bufio.NewScanner(os.Stdin)
+		if !scanner.Scan() {
+			log.Fatal("no private key given on standard input")
+		}
+		keypair := loadKey(scanner.Text())
+		fmt.Println(base64.StdEncoding.EncodeToString(keypair.Public))
+		return
+	}
 
 	makeServer(os.Args[1], os.Args[2])
 }
